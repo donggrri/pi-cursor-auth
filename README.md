@@ -4,7 +4,7 @@ A [pi](https://pi.dev) extension that registers **Cursor** as a model provider, 
 
 It discovers the live Cursor model catalog, streams thinking and text into pi, and is a small alternative to [`pi-cursor-sdk`](https://www.npmjs.com/package/pi-cursor-sdk): Cursor's own agent runs its tools, and this plugin relays the final answer.
 
-See the [changelog](https://github.com/morizkay/pi-cursor-auth/blob/main/CHANGELOG.md) for release notes.
+See the [changelog](https://github.com/morizkay/pi-cursor-auth/blob/main/CHANGELOG.md) for release notes. Contributor notes are in [AGENTS.md](https://github.com/morizkay/pi-cursor-auth/blob/main/AGENTS.md).
 
 ## Install
 
@@ -23,8 +23,8 @@ pi install git:github.com/morizkay/pi-cursor-auth
 Pin a version if you want updates to skip this package:
 
 ```bash
-pi install npm:pi-cursor-auth@0.1.1
-pi install git:github.com/morizkay/pi-cursor-auth@v0.1.1
+pi install npm:pi-cursor-auth@0.1.2
+pi install git:github.com/morizkay/pi-cursor-auth@v0.1.2
 ```
 
 Installs are written to `~/.pi/agent/settings.json`. Use `-l` to install for the current project (`.pi/settings.json`) instead.
@@ -114,6 +114,8 @@ Cursor's agent executes its own tools. This plugin does not re-implement that lo
 
 ## Development
 
+Clone, install, and see [AGENTS.md](https://github.com/morizkay/pi-cursor-auth/blob/main/AGENTS.md) for layout, commands, and contribution rules.
+
 ```bash
 git clone https://github.com/morizkay/pi-cursor-auth.git
 cd pi-cursor-auth
@@ -126,7 +128,7 @@ npm test                 # unit + live integration (real Cursor call)
 npm run check            # tsc --noEmit
 ```
 
-The live test calls Cursor with your key and asserts a streamed response with token usage.
+The live test calls Cursor with your key and asserts a streamed response with token usage. It is skipped when `CURSOR_API_KEY` is unset.
 
 For a local pi install from a checkout:
 

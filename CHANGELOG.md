@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-08-27
+
+### Changed
+
+- README rewritten as public install docs (npm/git install and uninstall, settings, `/login`)
+- Changelog version links point at GitHub instead of mixed npm/GitHub URLs
+- Link [`pi-cursor-sdk`](https://www.npmjs.com/package/pi-cursor-sdk) as the conflicting alternative
+- [AGENTS.md](https://github.com/morizkay/pi-cursor-auth/blob/main/AGENTS.md) for contributors working in this repo
+
 ## [0.1.1] - 2026-08-27
 
 ### Added
@@ -32,6 +41,7 @@ Initial public release. Minimal pi extension that uses a Cursor SDK API key as a
 
 - Streamed assistant text and thinking accumulated into a single pi block per turn (Cursor emits one word per chunk; without this, each word rendered on its own line)
 
-[Unreleased]: https://github.com/morizkay/pi-cursor-auth/compare/v0.1.1...main
+[Unreleased]: https://github.com/morizkay/pi-cursor-auth/compare/v0.1.2...main
+[0.1.2]: https://github.com/morizkay/pi-cursor-auth/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/morizkay/pi-cursor-auth/compare/579fc344fd29e85c1b2667c2d9a82f79dddbec87...v0.1.1
 [0.1.0]: https://github.com/morizkay/pi-cursor-auth/tree/579fc344fd29e85c1b2667c2d9a82f79dddbec87
