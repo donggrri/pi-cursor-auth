@@ -15,7 +15,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Changelog version links point at GitHub instead of mixed npm/GitHub URLs
 - Link [`pi-cursor-sdk`](https://www.npmjs.com/package/pi-cursor-sdk) as the conflicting alternative
 - [AGENTS.md](https://github.com/morizkay/pi-cursor-auth/blob/main/AGENTS.md) for contributors working in this repo
-- Default to pnpm for install, test, and typecheck
 
 ## [0.1.1] - 2026-08-27
 

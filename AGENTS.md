@@ -13,9 +13,9 @@ Do not re-implement Cursor's agent loop or surface Cursor's internal tool calls 
 ## Commands
 
 ```bash
-pnpm install
-pnpm check               # tsc --noEmit
-pnpm test                # unit tests; live test needs CURSOR_API_KEY
+npm install
+npm run check            # tsc --noEmit
+npm test                 # unit tests; live test needs CURSOR_API_KEY
 pi install ./            # load this checkout as a local pi package
 ```
 
@@ -23,7 +23,7 @@ Live test:
 
 ```bash
 export CURSOR_API_KEY="crsr_..."
-pnpm test
+npm test
 ```
 
 ## Rules
@@ -33,4 +33,4 @@ pnpm test
 - Unknown model ids (including `auto-smart`) map to `cursor/default`.
 - API key order: explicit key (not the placeholder), then `CURSOR_API_KEY`, then `~/.pi/agent/auth.json`.
 - Do not commit secrets (`.env`, `.cursor-key`, keys in `auth.json`).
-- Public docs live in `README.md`. Follow pi's real CLI (`pi install npm:…`, `pi uninstall`, `/login`, `/model` + Ctrl+S). Use **pnpm** for install, test, and check in this repo.
+- Public docs live in `README.md`. Follow pi's real CLI (`pi install npm:…`, `pi uninstall`, `/login`, `/model` + Ctrl+S).
