@@ -1,0 +1,22 @@
+{
+  "name": "pi-cursor-auth",
+  "version": "0.1.0",
+  "description": "pi extension: use your Cursor SDK API key as a pi provider",
+  "type": "module",
+  "license": "MIT",
+  "keywords": ["pi-package", "pi-extension", "cursor", "cursor-sdk", "ai"],
+  "pi": {
+    "extensions": ["./src/index.ts"]
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cursor/sdk": "1.0.27"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}
