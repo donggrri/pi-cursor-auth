@@ -119,13 +119,13 @@ Clone, install, and see [AGENTS.md](https://github.com/morizkay/pi-cursor-auth/b
 ```bash
 git clone https://github.com/morizkay/pi-cursor-auth.git
 cd pi-cursor-auth
-npm install
+pnpm install
 ```
 
 ```bash
 export CURSOR_API_KEY="crsr_..."
-npm test                 # unit + live integration (real Cursor call)
-npm run check            # tsc --noEmit
+pnpm test                # unit + live integration (real Cursor call)
+pnpm check               # tsc --noEmit
 ```
 
 The live test calls Cursor with your key and asserts a streamed response with token usage. It is skipped when `CURSOR_API_KEY` is unset.
