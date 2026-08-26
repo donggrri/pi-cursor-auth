@@ -1,6 +1,6 @@
 {
   "name": "pi-cursor-auth",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "pi extension: use your Cursor SDK API key as a pi provider",
   "type": "module",
   "license": "MIT",

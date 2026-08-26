@@ -1,7 +1,7 @@
 # pi-cursor-auth
 
 A minimal [pi](https://pi.dev) extension that lets pi use your **Cursor SDK API key**
-as a model provider. It registers a `cursor` provider backed by `@cursor/sdk`, resolves
+as a model provider. See [CHANGELOG.md](CHANGELOG.md) for release notes. It registers a `cursor` provider backed by `@cursor/sdk`, resolves
 your key from the environment or pi's credential store, discovers the live Cursor model
 catalog, and streams Cursor's responses (thinking + text) into pi.
 
