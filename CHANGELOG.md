@@ -32,6 +32,6 @@ Initial public release. Minimal pi extension that uses a Cursor SDK API key as a
 
 - Streamed assistant text and thinking accumulated into a single pi block per turn (Cursor emits one word per chunk; without this, each word rendered on its own line)
 
-[Unreleased]: https://github.com/morizkay/pi-cursor-auth/compare/v0.1.1...HEAD
-[0.1.1]: https://github.com/morizkay/pi-cursor-auth/releases/tag/v0.1.1
-[0.1.0]: https://www.npmjs.com/package/pi-cursor-auth/v/0.1.0
+[Unreleased]: https://github.com/morizkay/pi-cursor-auth/compare/v0.1.1...main
+[0.1.1]: https://github.com/morizkay/pi-cursor-auth/compare/579fc344fd29e85c1b2667c2d9a82f79dddbec87...v0.1.1
+[0.1.0]: https://github.com/morizkay/pi-cursor-auth/tree/579fc344fd29e85c1b2667c2d9a82f79dddbec87
