@@ -34,13 +34,19 @@ declare module "@earendil-works/pi-ai" {
   export type Model<T = any> = any;
   export type SimpleStreamOptions = any;
   export type StopReason = string;
+  export type Provider = any;
   export function createAssistantMessageEventStream(): AssistantMessageEventStream;
   export function calculateCost(model: any, usage: any): void;
+  export function createProvider(input: any): Provider;
+  export function envApiKeyAuth(
+    name: string,
+    envVars: readonly string[],
+  ): any;
 }
 
 declare module "@earendil-works/pi-coding-agent" {
   export interface ExtensionAPI {
-    registerProvider(id: string, config: any): void;
+    registerProvider(providerOrName: any, config?: any): void;
     unregisterProvider(id: string): void;
     registerCommand(name: string, options: any): void;
     on(

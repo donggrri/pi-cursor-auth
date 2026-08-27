@@ -1,8 +1,8 @@
 # pi-cursor-auth
 
-A [pi](https://pi.dev) extension that registers **Cursor** as a model provider, using your [Cursor SDK](https://cursor.com) API key.
+A [pi](https://pi.dev) extension that registers **Cursor** as a pi model provider, using your [Cursor SDK](https://cursor.com) API key.
 
-It discovers the live Cursor model catalog, streams thinking and text into pi, and is a small alternative to [`pi-cursor-sdk`](https://www.npmjs.com/package/pi-cursor-sdk): Cursor's own agent runs its tools, and this plugin relays the final answer.
+Pi owns the agent loop, tools, and extensions (`pi-lens`, ponytail, hermes-memory, and the rest). Cursor is the model: this plugin streams thinking, text, and tool calls back into pi.
 
 See the [changelog](https://github.com/morizkay/pi-cursor-auth/blob/main/CHANGELOG.md) for release notes. Contributor notes are in [AGENTS.md](https://github.com/morizkay/pi-cursor-auth/blob/main/AGENTS.md).
 
@@ -23,17 +23,13 @@ pi install git:github.com/morizkay/pi-cursor-auth
 Pin a version if you want updates to skip this package:
 
 ```bash
-pi install npm:pi-cursor-auth@0.1.2
-pi install git:github.com/morizkay/pi-cursor-auth@v0.1.2
+pi install npm:pi-cursor-auth@0.2.0
+pi install git:github.com/morizkay/pi-cursor-auth@v0.2.0
 ```
 
 Installs are written to `~/.pi/agent/settings.json`. Use `-l` to install for the current project (`.pi/settings.json`) instead.
 
-If you also have [`pi-cursor-sdk`](https://www.npmjs.com/package/pi-cursor-sdk) installed, uninstall it first — both register the `cursor` provider and will conflict:
-
-```bash
-pi uninstall npm:pi-cursor-sdk
-```
+Only one `cursor` provider should be installed. Uninstall any other Cursor provider first.
 
 ## Uninstall
 
@@ -98,18 +94,15 @@ Unknown model ids, including `auto-smart`, are mapped to `cursor/default`.
 
 ## How it works
 
-The extension registers a `cursor` provider backed by `@cursor/sdk`. On each turn it:
+The extension registers a complete pi `Provider` via `createProvider()`. On each turn it:
 
-1. Resolves your API key from `CURSOR_API_KEY` or `~/.pi/agent/auth.json`
-2. Reuses a Cursor agent for the current pi session (recreated after compaction or an errored run)
-3. Streams thinking, assistant text, and usage from Cursor into pi
-
-Cursor's agent executes its own tools. This plugin does not re-implement that loop or surface those tool calls in pi.
+1. Uses pi `/login` (or `CURSOR_API_KEY` / `/cursor-auth`) for the Cursor API key
+2. Sends **pi's** system prompt, conversation, and tools (pi-lens, builtins, and the rest) to a Cursor model
+3. Keeps Cursor's built-in file/shell tools off. Model tool calls come back to pi as `toolCall` events so **pi** executes them and continues the loop
 
 ## Limitations
 
-- Cursor's agent runs **autonomously** (file/shell tools). This plugin relays the final answer and thinking; it does not surface Cursor's internal tool calls into pi's tool runtime.
-- The Cursor agent is scoped per pi session and reused across follow-up turns.
+- Each pi model round-trip creates a fresh Cursor agent with `tools: []` (or MCP-only for pi tools). Cursor does not keep its own tool loop or session memory.
 - Model context windows and costs are not available per-model from the SDK catalog, so costs show as $0 in usage. Token counts are accurate.
 
 ## Development

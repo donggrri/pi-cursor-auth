@@ -1,7 +1,7 @@
 {
   "name": "pi-cursor-auth",
-  "version": "0.1.2",
-  "description": "pi extension: use your Cursor SDK API key as a pi provider",
+  "version": "0.2.0",
+  "description": "pi extension: Cursor models through pi's harness (extensions and pi tools stay in the loop)",
   "type": "module",
   "license": "MIT",
   "keywords": ["pi-package", "pi-extension", "cursor", "cursor-sdk", "ai"],

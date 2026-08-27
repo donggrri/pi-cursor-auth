@@ -1,31 +1,22 @@
 import {
   createAssistantMessageEventStream,
   calculateCost,
+  createProvider,
+  envApiKeyAuth,
 } from "@earendil-works/pi-ai";
-import { readStoredCredential } from "@earendil-works/pi-coding-agent";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 
 import {
   CURSOR_PROVIDER_ID,
-  CURSOR_API_KEY_PLACEHOLDER,
+  CURSOR_BASE_URL,
   resolveCursorApiKey,
   discoverCursorModels,
   fallbackModels,
   setKnownModelIds,
-  runCursorTurn,
-  dropAgent,
+  createCursorStreams,
 } from "./cursor-core.js";
-
-function safeReadStoredKey(provider: string): string | undefined {
-  try {
-    const cred = readStoredCredential(provider);
-    return cred?.type === "api_key" ? cred.key : undefined;
-  } catch {
-    return undefined;
-  }
-}
 
 function authJsonPath(): string {
   const dir = process.env.PI_CODING_AGENT_DIR
@@ -50,55 +41,38 @@ export function writeCursorKey(key: string): void {
   writeFileSync(path, JSON.stringify(data, null, 2), "utf8");
 }
 
-function resolveKey(options: any): string | undefined {
-  return resolveCursorApiKey(options?.apiKey, {
-    env: process.env.CURSOR_API_KEY,
-    stored: safeReadStoredKey(CURSOR_PROVIDER_ID),
+async function fetchCursorModels(context: any): Promise<any[]> {
+  const stored =
+    context?.credential?.type === "api_key"
+      ? context.credential.key
+      : undefined;
+  const live = await discoverCursorModels(
+    resolveCursorApiKey(stored, { env: process.env.CURSOR_API_KEY }),
+  );
+  const models = live.length ? live : fallbackModels();
+  setKnownModelIds(models.map((m) => m.id));
+  return models;
+}
+
+export function createCursorProvider() {
+  return createProvider({
+    id: CURSOR_PROVIDER_ID,
+    name: "Cursor",
+    baseUrl: CURSOR_BASE_URL,
+    auth: {
+      apiKey: envApiKeyAuth("Cursor API key", ["CURSOR_API_KEY"]),
+    },
+    models: fallbackModels(),
+    fetchModels: fetchCursorModels,
+    api: createCursorStreams({
+      createStream: createAssistantMessageEventStream,
+      calculateCost,
+    }),
   });
 }
 
-export default async function (pi: any) {
-  let currentSessionKey = "anon";
-
-  const streamSimple = (model: any, context: any, options?: any) =>
-    runCursorTurn({
-      model,
-      context,
-      options,
-      apiKey: resolveKey(options),
-      sessionKey: currentSessionKey,
-      deps: { createStream: createAssistantMessageEventStream, calculateCost },
-    });
-
-  function registerCursorProvider(models: any[]) {
-    setKnownModelIds(models.map((m) => m.id));
-    pi.registerProvider(CURSOR_PROVIDER_ID, {
-      name: "Cursor",
-      baseUrl: "https://cursor.com",
-      apiKey: CURSOR_API_KEY_PLACEHOLDER,
-      api: "cursor-sdk",
-      models,
-      streamSimple,
-    });
-  }
-
-  // Initial model catalog: live if a key is already available, else fallback.
-  const startupKey = resolveCursorApiKey(undefined, {
-    env: process.env.CURSOR_API_KEY,
-    stored: safeReadStoredKey(CURSOR_PROVIDER_ID),
-  });
-  const live = await discoverCursorModels(startupKey);
-  const models = live.length ? live : fallbackModels();
-  registerCursorProvider(models);
-
-  pi.on("session_start", (_event: any, ctx: any) => {
-    currentSessionKey =
-      ctx?.sessionManager?.getSessionFile?.() ?? ctx?.sessionId ?? "anon";
-  });
-
-  pi.on("session_before_compact", () => {
-    dropAgent(currentSessionKey);
-  });
+export default function (pi: any) {
+  pi.registerProvider(createCursorProvider());
 
   pi.registerCommand("cursor-auth", {
     description: "Store your Cursor SDK API key for pi (env, arg, or prompt)",
@@ -112,7 +86,15 @@ export default async function (pi: any) {
         return;
       }
       writeCursorKey(key);
-      dropAgent(currentSessionKey);
+      if (ctx?.modelRegistry?.refresh) {
+        await ctx.modelRegistry.refresh({
+          providers: [CURSOR_PROVIDER_ID],
+          allowNetwork: true,
+          force: true,
+        });
+        ctx?.ui?.notify("Cursor API key saved. Model catalog refreshed.", "info");
+        return;
+      }
       ctx?.ui?.notify(
         "Cursor API key saved. Run /cursor-refresh-models to load the live catalog.",
         "info",
@@ -124,20 +106,34 @@ export default async function (pi: any) {
     description:
       "Re-discover the live Cursor model catalog with the current key",
     handler: async (_args: string, ctx: any) => {
-      const key = resolveKey({ apiKey: CURSOR_API_KEY_PLACEHOLDER });
-      const refreshed = await discoverCursorModels(key);
-      if (!refreshed.length) {
+      if (!ctx?.modelRegistry?.refresh) {
         ctx?.ui?.notify(
-          "No Cursor key configured or discovery failed.",
+          "This pi version cannot refresh provider catalogs.",
           "warning",
         );
         return;
       }
-      registerCursorProvider(refreshed);
-      ctx?.ui?.notify(
-        `Cursor catalog refreshed with ${refreshed.length} models.`,
-        "info",
-      );
+      const result = await ctx.modelRegistry.refresh({
+        providers: [CURSOR_PROVIDER_ID],
+        allowNetwork: true,
+        force: true,
+      });
+      if (result?.aborted) {
+        ctx?.ui?.notify("Cursor catalog refresh was cancelled.", "warning");
+        return;
+      }
+      const refreshError = result?.errors?.get?.(CURSOR_PROVIDER_ID);
+      if (refreshError) {
+        ctx?.ui?.notify(
+          `Cursor catalog refresh failed: ${refreshError.message ?? refreshError}`,
+          "warning",
+        );
+        return;
+      }
+      const count = (ctx.modelRegistry.getAll?.() ?? []).filter(
+        (m: any) => m.provider === CURSOR_PROVIDER_ID,
+      ).length;
+      ctx?.ui?.notify(`Cursor catalog refreshed with ${count} models.`, "info");
     },
   });
 }

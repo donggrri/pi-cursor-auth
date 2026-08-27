@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-27
+
+### Changed
+
+- **Breaking:** Cursor is now a model inside **pi's harness**. Pi's system prompt, conversation, and tools are the request; Cursor is inference only. Pi executes tools (including extension tools such as pi-lens). Cursor's built-in file/shell tools stay disabled.
+- Provider registration uses pi's `createProvider()` + `envApiKeyAuth` + `fetchModels` (native `/login` and catalog refresh).
+- Each turn sends pi's full context (system prompt, conversation, and tool results) instead of only the last user message.
+- Dropped per-session Cursor agent reuse. A fresh agent is created for every model round-trip.
+
+### Added
+
+- Cursor custom-tool and MCP calls are unwrapped and emitted as pi `toolCall` events so pi can run them and continue the loop.
+
 ## [0.1.2] - 2026-08-27
 
 ### Changed
@@ -41,7 +54,8 @@ Initial public release. Minimal pi extension that uses a Cursor SDK API key as a
 
 - Streamed assistant text and thinking accumulated into a single pi block per turn (Cursor emits one word per chunk; without this, each word rendered on its own line)
 
-[Unreleased]: https://github.com/morizkay/pi-cursor-auth/compare/v0.1.2...main
+[Unreleased]: https://github.com/morizkay/pi-cursor-auth/compare/v0.2.0...main
+[0.2.0]: https://github.com/morizkay/pi-cursor-auth/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/morizkay/pi-cursor-auth/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/morizkay/pi-cursor-auth/compare/579fc344fd29e85c1b2667c2d9a82f79dddbec87...v0.1.1
 [0.1.0]: https://github.com/morizkay/pi-cursor-auth/tree/579fc344fd29e85c1b2667c2d9a82f79dddbec87

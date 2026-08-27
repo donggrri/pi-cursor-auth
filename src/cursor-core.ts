@@ -3,14 +3,11 @@ import { Agent, Cursor } from "@cursor/sdk";
 export const CURSOR_PROVIDER_ID = "cursor";
 export const CURSOR_API_KEY_PLACEHOLDER = "pi-cursor-auth-placeholder";
 
-// Model id aliases -> real Cursor model ids.
 const MODEL_ALIASES: Record<string, string> = {
   "auto-smart": "default",
   auto: "default",
 };
 
-// Known model ids registered with pi (discovered live + fallback). Used to map
-// unknown requested ids (e.g. the user's saved "auto-smart") to a valid one.
 const knownModelIds = new Set<string>(["default"]);
 
 export function setKnownModelIds(ids: string[]): void {
@@ -24,10 +21,6 @@ function resolveModelId(requested: string): string {
   return knownModelIds.has(requested) ? requested : "default";
 }
 
-// ---------------------------------------------------------------------------
-// Key resolution
-// ---------------------------------------------------------------------------
-
 export function resolveCursorApiKey(
   raw: string | undefined,
   opts: { env?: string | undefined; stored?: string | undefined } = {},
@@ -38,53 +31,218 @@ export function resolveCursorApiKey(
   return opts.stored?.trim() || undefined;
 }
 
-// ---------------------------------------------------------------------------
-// Prompt extraction
-// ---------------------------------------------------------------------------
+function textFromContent(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  const parts: string[] = [];
+  for (const block of content) {
+    if (typeof block === "string") parts.push(block);
+    else if (block?.type === "text") parts.push(block.text ?? "");
+  }
+  return parts.join("\n");
+}
 
-export function extractUserPrompt(context: any): {
-  text: string;
-  images?: any[];
-} {
+function asObject(value: unknown): Record<string, any> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, any>;
+  }
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return {};
+}
+
+export function extractLastUserImages(context: any): any[] | undefined {
   const messages: any[] = context?.messages ?? [];
   let lastUser: any = null;
   for (const m of messages) if (m?.role === "user") lastUser = m;
-  if (!lastUser) return { text: "" };
-
-  const content = lastUser.content;
-  if (typeof content === "string") return { text: content };
-
-  const textParts: string[] = [];
+  if (!lastUser || typeof lastUser.content === "string") return undefined;
   const images: any[] = [];
-  for (const block of content ?? []) {
-    if (block?.type === "text") textParts.push(block.text ?? "");
-    else if (block?.type === "image") {
+  for (const block of lastUser.content ?? []) {
+    if (block?.type === "image") {
       images.push({ data: block.data, mimeType: block.mimeType });
     }
   }
-  return {
-    text: textParts.join("\n"),
-    images: images.length ? images : undefined,
-  };
+  return images.length ? images : undefined;
 }
 
-// ---------------------------------------------------------------------------
-// Model discovery
-// ---------------------------------------------------------------------------
+function formatMessage(message: any): string {
+  if (message?.role === "user") {
+    return `[user]\n${textFromContent(message.content)}`;
+  }
+  if (message?.role === "assistant") {
+    const parts: string[] = [];
+    for (const block of message.content ?? []) {
+      if (block?.type === "text" && block.text) parts.push(block.text);
+      else if (block?.type === "toolCall") {
+        parts.push(
+          `[tool_call ${block.name} ${block.id}]\n${JSON.stringify(block.arguments ?? {}, null, 2)}`,
+        );
+      }
+    }
+    return `[assistant]\n${parts.join("\n")}`;
+  }
+  if (message?.role === "toolResult") {
+    const err = message.isError ? " error" : "";
+    return `[tool_result ${message.toolName ?? "tool"} ${message.toolCallId ?? ""}${err}]\n${textFromContent(message.content)}`;
+  }
+  return "";
+}
+
+export function buildHarnessPrompt(context: any): string {
+  const parts: string[] = [
+    "Use only the tools provided on this request. Do not use Cursor built-in file, shell, or edit tools. After a tool call, wait for the tool result in the next turn.",
+  ];
+  const system = context?.systemPrompt?.trim();
+  if (system) parts.push(system);
+  const messages: any[] = context?.messages ?? [];
+  if (messages.length) {
+    parts.push("## Conversation");
+    for (const message of messages) {
+      const formatted = formatMessage(message);
+      if (formatted) parts.push(formatted);
+    }
+  }
+  return parts.join("\n\n");
+}
+
+const MCP_META = new Set([
+  "mcp",
+  "CallMcpTool",
+  "call_mcp_tool",
+  "GetMcpTools",
+  "get_mcp_tools",
+]);
+
+export function unwrapCursorToolCall(
+  name: string | undefined,
+  args: unknown,
+  id: string,
+  allowedNames?: Set<string>,
+): { id: string; name: string; arguments: Record<string, any> } | null {
+  if (!name) return null;
+  if (name === "GetMcpTools" || name === "get_mcp_tools") return null;
+
+  let toolName = name;
+  let toolArgs = asObject(args);
+
+  if (MCP_META.has(name) || /mcp/i.test(name)) {
+    toolName = toolArgs.toolName || toolArgs.tool_name || toolArgs.name || "";
+    toolArgs = asObject(
+      toolArgs.arguments ?? toolArgs.input ?? toolArgs.args ?? {},
+    );
+  }
+  if (toolName.startsWith("pi__")) toolName = toolName.slice(4);
+  if (!toolName) return null;
+  if (
+    allowedNames?.size &&
+    !allowedNames.has(toolName) &&
+    !allowedNames.has(name)
+  ) {
+    return null;
+  }
+  return { id, name: toolName, arguments: toolArgs };
+}
+
+export function collectToolCalls(
+  content: any[] | undefined,
+  allowedNames?: Set<string>,
+): any[] {
+  const calls: any[] = [];
+  for (const block of content ?? []) {
+    if (block?.type !== "tool_use") continue;
+    const call = unwrapCursorToolCall(
+      block.name,
+      block.input,
+      block.id || `call_${calls.length + 1}`,
+      allowedNames,
+    );
+    if (call) calls.push(call);
+  }
+  return calls;
+}
+
+export function thinkingParams(
+  model: any,
+  reasoning: string | undefined,
+): any[] | undefined {
+  if (!reasoning || reasoning === "off") return undefined;
+  const defs = model?.cursorParameters ?? model?.parameters ?? [];
+  if (!Array.isArray(defs) || !defs.length) return undefined;
+  const def = defs.find(
+    (d: any) =>
+      /reason|think|effort/i.test(d?.id ?? "") ||
+      /reason|think|effort/i.test(d?.displayName ?? ""),
+  );
+  if (!def?.id) return undefined;
+  const values = (def.values ?? []).map((v: any) => v?.value ?? v);
+  const value = values.includes(reasoning) ? reasoning : values[0];
+  if (!value) return undefined;
+  return [{ id: def.id, value: String(value) }];
+}
+
+function toCustomTools(
+  tools: any[],
+  onCall: (call: {
+    id: string;
+    name: string;
+    arguments: Record<string, any>;
+  }) => void,
+  park: () => Promise<void>,
+): Record<string, any> {
+  const custom: Record<string, any> = {};
+  for (const tool of tools) {
+    if (!tool?.name) continue;
+    const schema =
+      tool.parameters && typeof tool.parameters === "object"
+        ? tool.parameters
+        : { type: "object", properties: {} };
+    custom[tool.name] = {
+      description: tool.description || tool.name,
+      inputSchema: schema,
+      execute: async (args: any, ctx: any) => {
+        onCall({
+          id: ctx?.toolCallId || `call_${tool.name}`,
+          name: tool.name,
+          arguments: asObject(args),
+        });
+        await park();
+        return {
+          content: [{ type: "text", text: "handed to pi" }],
+          isError: true,
+        };
+      },
+    };
+  }
+  return custom;
+}
+
+export const CURSOR_API = "cursor-sdk";
+export const CURSOR_BASE_URL = "https://cursor.com";
 
 function toPiModel(m: any): any {
   return {
     id: m.id,
     name: m.displayName || m.id,
+    api: CURSOR_API,
+    provider: CURSOR_PROVIDER_ID,
+    baseUrl: CURSOR_BASE_URL,
     reasoning: true,
     input: ["text", "image"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 200000,
     maxTokens: 64000,
+    cursorParameters: m.parameters,
   };
 }
 
-// Curated fallback so /model shows something even before a key is configured.
 const FALLBACK_MODELS: any[] = [
   toPiModel({ id: "default", displayName: "Cursor Default" }),
   toPiModel({ id: "claude-opus-5", displayName: "Claude Opus 5" }),
@@ -97,68 +255,26 @@ export function fallbackModels(): any[] {
   return FALLBACK_MODELS;
 }
 
+setKnownModelIds(FALLBACK_MODELS.map((m) => m.id));
+
 export async function discoverCursorModels(
   apiKey: string | undefined,
 ): Promise<any[]> {
   if (!apiKey) return [];
   try {
     const models = await Cursor.models.list({ apiKey });
-    return (models ?? []).map(toPiModel);
+    const mapped = (models ?? []).map(toPiModel);
+    if (mapped.length) setKnownModelIds(mapped.map((m: any) => m.id));
+    return mapped;
   } catch {
     return [];
   }
 }
 
-// ---------------------------------------------------------------------------
-// Agent pool (session-scoped reuse for multi-turn continuity)
-// ---------------------------------------------------------------------------
-
-interface PooledAgent {
-  agent: any;
-  modelId: string;
-  apiKey: string;
-}
-
-const agentPool = new Map<string, PooledAgent>();
-
-async function getOrCreateAgent(
-  sessionKey: string,
-  modelId: string,
-  apiKey: string,
-  cwd: string,
-): Promise<any> {
-  const existing = agentPool.get(sessionKey);
-  if (existing && existing.modelId === modelId && existing.apiKey === apiKey) {
-    return existing.agent;
-  }
-  const agent = await Agent.create({
-    model: { id: modelId },
-    apiKey,
-    local: { cwd },
-  });
-  agentPool.set(sessionKey, { agent, modelId, apiKey });
-  return agent;
-}
-
-export function dropAgent(sessionKey: string): void {
-  const pooled = agentPool.get(sessionKey);
-  if (pooled) {
-    try {
-      pooled.agent.close?.();
-    } catch {
-      /* ignore */
-    }
-    agentPool.delete(sessionKey);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Streaming run
-// ---------------------------------------------------------------------------
-
 interface TurnDeps {
   createStream: () => any;
   calculateCost: (model: any, usage: any) => void;
+  createAgent?: (opts: any) => Promise<any>;
 }
 
 function makeInitialMessage(model: any): any {
@@ -205,10 +321,6 @@ function applyUsage(
   }
 }
 
-// Cursor's SDK emits the assistant message once per token/word (each with a
-// single text block), and thinking similarly. Opening a new pi block per chunk
-// makes pi render each word on its own line, so we accumulate into one block and
-// only emit _start once and _end after the stream completes.
 function makeBlockAppenders(output: any, stream: any) {
   let openTextIdx = -1;
   let openText = "";
@@ -279,7 +391,39 @@ function makeBlockAppenders(output: any, stream: any) {
     });
   };
 
-  return { appendThinking, appendText, closeThinking, closeText };
+  const emitToolCalls = (calls: any[]) => {
+    closeThinking();
+    closeText();
+    const seen = new Set<string>();
+    for (const call of calls) {
+      const key = call.id || `${call.name}:${JSON.stringify(call.arguments)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      output.content.push({
+        type: "toolCall",
+        id: call.id,
+        name: call.name,
+        arguments: call.arguments ?? {},
+      });
+      const idx = output.content.length - 1;
+      const json = JSON.stringify(call.arguments ?? {});
+      stream.push({ type: "toolcall_start", contentIndex: idx, partial: output });
+      stream.push({
+        type: "toolcall_delta",
+        contentIndex: idx,
+        delta: json,
+        partial: output,
+      });
+      stream.push({
+        type: "toolcall_end",
+        contentIndex: idx,
+        toolCall: output.content[idx],
+        partial: output,
+      });
+    }
+  };
+
+  return { appendThinking, appendText, closeThinking, closeText, emitToolCalls };
 }
 
 export function runCursorTurn(opts: {
@@ -287,11 +431,11 @@ export function runCursorTurn(opts: {
   context: any;
   options?: any;
   apiKey: string | undefined;
-  sessionKey?: string;
   deps: TurnDeps;
 }): any {
-  const { model, context, options, apiKey, sessionKey = "anon", deps } = opts;
+  const { model, context, options, apiKey, deps } = opts;
   const stream = deps.createStream();
+  const createAgent = deps.createAgent ?? ((o: any) => Agent.create(o));
 
   (async () => {
     const output = makeInitialMessage(model);
@@ -308,57 +452,189 @@ export function runCursorTurn(opts: {
     }
 
     const modelId = resolveModelId(model.id);
-    try {
-      const agent = await getOrCreateAgent(
-        sessionKey,
-        modelId,
-        apiKey,
-        process.cwd(),
-      );
-      const { text, images } = extractUserPrompt(context);
-      const userMessage = images?.length ? { text, images } : text;
+    let agent: any;
+    let run: any;
+    const captured: any[] = [];
+    const allowedNames = new Set<string>(
+      (context?.tools ?? [])
+        .map((t: any) => t?.name)
+        .filter((name: unknown): name is string => typeof name === "string"),
+    );
+    const remember = (calls: any[]) => {
+      for (const call of calls) {
+        if (!call) continue;
+        captured.push(call);
+      }
+    };
+    const handoff = new AbortController();
+    const park = () =>
+      new Promise<void>((resolve) => {
+        if (handoff.signal.aborted) {
+          resolve();
+          return;
+        }
+        handoff.signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+    let handoffTimer: ReturnType<typeof setTimeout> | undefined;
+    const requestHandoff = () => {
+      if (handoffTimer) return;
+      handoffTimer = setTimeout(() => {
+        handoff.abort();
+        try {
+          run?.cancel?.();
+        } catch {
+          /* ignore */
+        }
+      }, 50);
+    };
 
-      const run = await agent.send(userMessage, {});
+    try {
+      const piTools: any[] = context?.tools ?? [];
+      let prompt = buildHarnessPrompt(context);
+      const images = extractLastUserImages(context);
+      const params = thinkingParams(model, options?.reasoning);
+      let payload: any = {
+        text: prompt,
+        images,
+        modelId,
+        tools: piTools.map((t) => t.name),
+        params,
+      };
+      if (options?.onPayload) {
+        const replaced = await options.onPayload(payload, model);
+        if (replaced && typeof replaced === "object") payload = replaced;
+      }
+      prompt = payload.text ?? prompt;
+
+      agent = await createAgent({
+        model: {
+          id: payload.modelId ?? modelId,
+          ...(payload.params?.length ? { params: payload.params } : {}),
+        },
+        apiKey,
+        tools: piTools.length ? ["mcp"] : [],
+        local: {
+          cwd: process.cwd(),
+          settingSources: [],
+          customTools: piTools.length
+            ? toCustomTools(piTools, (call) => {
+                remember([call]);
+                requestHandoff();
+              }, park)
+            : undefined,
+        },
+      });
+
+      const userMessage = payload.images?.length
+        ? { text: prompt, images: payload.images }
+        : prompt;
+      run = await agent.send(userMessage, {});
+
+      const onAbort = () => {
+        handoff.abort();
+        try {
+          run?.cancel?.();
+        } catch {
+          /* ignore */
+        }
+      };
+      if (options?.signal?.aborted) onAbort();
+      options?.signal?.addEventListener?.("abort", onAbort, { once: true });
+
       for await (const msg of run.stream()) {
+        if (options?.signal?.aborted || handoff.signal.aborted) break;
         if (msg?.type === "thinking") {
           blocks.appendThinking(msg.text);
         } else if (msg?.type === "assistant") {
-          for (const block of msg.message?.content ?? []) {
+          const content = msg.message?.content ?? [];
+          for (const block of content) {
             if (block?.type === "text") blocks.appendText(block.text);
-            // Cursor executes its own tools; do not re-expose tool_use to pi.
+          }
+          const calls = collectToolCalls(content, allowedNames);
+          if (calls.length) {
+            remember(calls);
+            requestHandoff();
+          }
+        } else if (msg?.type === "tool_call" && msg.name) {
+          const call = unwrapCursorToolCall(
+            msg.name,
+            msg.args,
+            msg.call_id || `call_${captured.length + 1}`,
+            allowedNames,
+          );
+          if (call) {
+            remember([call]);
+            requestHandoff();
           }
         } else if (msg?.type === "usage") {
           applyUsage(output, msg.usage, model, deps.calculateCost);
         }
       }
-      blocks.closeThinking();
-      blocks.closeText();
 
-      const result = await run.wait();
+      let result: any;
+      try {
+        result = await run.wait();
+      } catch {
+        result = undefined;
+      }
       if (result?.usage)
         applyUsage(output, result.usage, model, deps.calculateCost);
 
-      if (result?.status === "finished") {
+      if (captured.length) {
+        blocks.emitToolCalls(captured);
+        output.stopReason = "toolUse";
+        stream.push({ type: "done", reason: "toolUse", message: output });
+      } else if (options?.signal?.aborted || result?.status === "cancelled") {
+        blocks.closeThinking();
+        blocks.closeText();
+        output.stopReason = "aborted";
+        output.errorMessage = result?.error?.message || "Cursor run cancelled";
+        stream.push({ type: "error", reason: "aborted", error: output });
+      } else if (result?.status === "finished" || !result) {
+        blocks.closeThinking();
+        blocks.closeText();
         output.stopReason = "stop";
         stream.push({ type: "done", reason: "stop", message: output });
-      } else if (result?.status === "cancelled") {
-        output.stopReason = "aborted";
-        output.errorMessage = result.error?.message || "Cursor run cancelled";
-        stream.push({ type: "error", reason: "aborted", error: output });
       } else {
+        blocks.closeThinking();
+        blocks.closeText();
         output.stopReason = "error";
         output.errorMessage = result?.error?.message || "Cursor run failed";
         stream.push({ type: "error", reason: "error", error: output });
       }
     } catch (err) {
-      dropAgent(sessionKey);
       output.stopReason = options?.signal?.aborted ? "aborted" : "error";
       output.errorMessage = err instanceof Error ? err.message : String(err);
       stream.push({ type: "error", reason: output.stopReason, error: output });
     } finally {
+      if (handoffTimer) clearTimeout(handoffTimer);
+      try {
+        handoff.abort();
+      } catch {
+        /* ignore */
+      }
+      try {
+        agent?.close?.();
+      } catch {
+        /* ignore */
+      }
       stream.end(output);
     }
   })();
 
   return stream;
+}
+
+export function createCursorStreams(deps: TurnDeps) {
+  const stream = (model: any, context: any, options?: any) =>
+    runCursorTurn({
+      model,
+      context,
+      options,
+      apiKey: resolveCursorApiKey(options?.apiKey, {
+        env: process.env.CURSOR_API_KEY,
+      }),
+      deps,
+    });
+  return { stream, streamSimple: stream };
 }

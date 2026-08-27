@@ -2,10 +2,15 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  extractUserPrompt,
+  extractLastUserImages,
+  buildHarnessPrompt,
+  collectToolCalls,
+  unwrapCursorToolCall,
+  thinkingParams,
   setKnownModelIds,
   runCursorTurn,
   resolveCursorApiKey,
+  fallbackModels,
 } from "../src/cursor-core.ts";
 
 function fakeStream() {
@@ -20,19 +25,8 @@ function fakeStream() {
   };
 }
 
-test("extractUserPrompt handles string content", () => {
-  const { text, images } = extractUserPrompt({
-    messages: [
-      { role: "assistant", content: "hi" },
-      { role: "user", content: "do the thing" },
-    ],
-  });
-  assert.equal(text, "do the thing");
-  assert.equal(images, undefined);
-});
-
-test("extractUserPrompt handles block content + images", () => {
-  const { text, images } = extractUserPrompt({
+test("extractLastUserImages returns images from the last user message", () => {
+  const images = extractLastUserImages({
     messages: [
       {
         role: "user",
@@ -43,16 +37,114 @@ test("extractUserPrompt handles block content + images", () => {
       },
     ],
   });
-  assert.equal(text, "look");
   assert.equal(images?.length, 1);
   assert.equal(images?.[0].data, "base64data");
 });
 
-test("extractUserPrompt returns empty when no user message", () => {
-  const { text } = extractUserPrompt({
-    messages: [{ role: "assistant", content: "hi" }],
+test("extractLastUserImages is undefined for string content", () => {
+  const images = extractLastUserImages({
+    messages: [{ role: "user", content: "do the thing" }],
   });
-  assert.equal(text, "");
+  assert.equal(images, undefined);
+});
+
+test("buildHarnessPrompt puts pi's system prompt and history in front of Cursor", () => {
+  const prompt = buildHarnessPrompt({
+    systemPrompt: "Be a lazy senior.",
+    messages: [
+      { role: "user", content: "read pkg" },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "ok" },
+          {
+            type: "toolCall",
+            id: "c1",
+            name: "read",
+            arguments: { path: "package.json" },
+          },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "c1",
+        toolName: "read",
+        isError: false,
+        content: [{ type: "text", text: "{}" }],
+      },
+    ],
+  });
+  assert.match(prompt, /Use only the tools provided/);
+  assert.match(prompt, /Be a lazy senior/);
+  assert.match(prompt, /\[user\]\nread pkg/);
+  assert.match(prompt, /\[tool_call read c1\]/);
+  assert.match(prompt, /\[tool_result read c1\]/);
+  assert.ok(
+    prompt.indexOf("Be a lazy senior") < prompt.indexOf("[user]"),
+    "pi system prompt must precede conversation",
+  );
+});
+
+test("collectToolCalls reads Cursor tool_use blocks", () => {
+  const calls = collectToolCalls([
+    { type: "text", text: "hi" },
+    { type: "tool_use", id: "c1", name: "bash", input: { command: "ls" } },
+  ]);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].id, "c1");
+  assert.equal(calls[0].name, "bash");
+  assert.equal(calls[0].arguments.command, "ls");
+});
+
+test("unwrapCursorToolCall maps MCP calls onto pi tool names", () => {
+  const call = unwrapCursorToolCall(
+    "CallMcpTool",
+    {
+      toolName: "read",
+      arguments: { path: "package.json" },
+    },
+    "c1",
+    new Set(["read"]),
+  );
+  assert.equal(call?.name, "read");
+  assert.equal(call?.arguments.path, "package.json");
+  assert.equal(
+    unwrapCursorToolCall("GetMcpTools", {}, "c2", new Set(["read"])),
+    null,
+  );
+  assert.equal(
+    unwrapCursorToolCall("shell", { command: "rm -rf /" }, "c3", new Set(["read"])),
+    null,
+  );
+});
+
+test("thinkingParams maps pi reasoning onto Cursor model params", () => {
+  const model = {
+    cursorParameters: [
+      {
+        id: "reasoning_effort",
+        displayName: "Reasoning",
+        values: [{ value: "low" }, { value: "high" }],
+      },
+    ],
+  };
+  assert.deepEqual(thinkingParams(model, "high"), [
+    { id: "reasoning_effort", value: "high" },
+  ]);
+  assert.equal(thinkingParams(model, "off"), undefined);
+  assert.equal(thinkingParams({}, "high"), undefined);
+});
+
+test("fallbackModels are complete pi Model objects", () => {
+  const models = fallbackModels();
+  assert.ok(models.length > 0);
+  for (const model of models) {
+    assert.equal(model.provider, "cursor");
+    assert.equal(model.api, "cursor-sdk");
+    assert.equal(model.baseUrl, "https://cursor.com");
+    assert.equal(typeof model.id, "string");
+    assert.equal(model.reasoning, true);
+  }
 });
 
 test("resolveCursorApiKey prefers explicit key over placeholder/env/stored", () => {
@@ -84,7 +176,6 @@ test("runCursorTurn errors without an API key", async () => {
     model: { id: "default", api: "cursor-sdk", provider: "cursor" },
     context: { messages: [{ role: "user", content: "hi" }] },
     apiKey: undefined,
-    sessionKey: "k1",
     deps: { createStream: () => stream, calculateCost: () => {} },
   });
   await stream.closed;
@@ -94,23 +185,199 @@ test("runCursorTurn errors without an API key", async () => {
 });
 
 test("runCursorTurn maps unknown model id to default", async () => {
-  // No key -> we only verify the mapping doesn't crash before the key check.
   setKnownModelIds(["default", "claude-opus-5"]);
   const stream = fakeStream();
   runCursorTurn({
     model: { id: "auto-smart", api: "cursor-sdk", provider: "cursor" },
     context: { messages: [{ role: "user", content: "hi" }] },
     apiKey: undefined,
-    sessionKey: "k2",
     deps: { createStream: () => stream, calculateCost: () => {} },
   });
   await stream.closed;
-  // If it reached the key check, mapping succeeded without throwing.
   const error = stream.events.find((e) => e.type === "error");
   assert.match(error.error.errorMessage, /No Cursor API key/);
 });
 
-// Live integration test: requires CURSOR_API_KEY in the environment.
+test("runCursorTurn emits pi toolCall events and does not enable Cursor tools", async () => {
+  setKnownModelIds(["default"]);
+  const stream = fakeStream();
+  let created: any;
+  const createAgent = async (opts: any) => {
+    created = opts;
+    return {
+      send: async () => ({
+        stream: async function* () {
+          yield {
+            type: "assistant",
+            message: {
+              content: [{ type: "text", text: "Reading package.json now." }],
+            },
+          };
+          yield {
+            type: "assistant",
+            message: {
+              content: [
+                {
+                  type: "tool_use",
+                  id: "c1",
+                  name: "read",
+                  input: { path: "package.json" },
+                },
+              ],
+            },
+          };
+        },
+        cancel: async () => {},
+        wait: async () => ({ status: "cancelled" }),
+      }),
+      close: () => {},
+    };
+  };
+
+  runCursorTurn({
+    model: { id: "default", api: "cursor-sdk", provider: "cursor" },
+    context: {
+      systemPrompt: "Use pi tools.",
+      messages: [{ role: "user", content: "read package.json" }],
+      tools: [
+        {
+          name: "read",
+          description: "Read a file",
+          parameters: {
+            type: "object",
+            properties: { path: { type: "string" } },
+          },
+        },
+      ],
+    },
+    apiKey: "test-key",
+    deps: {
+      createStream: () => stream,
+      calculateCost: () => {},
+      createAgent,
+    },
+  });
+  await stream.closed;
+
+  assert.deepEqual(created.tools, ["mcp"]);
+  assert.equal(typeof created.local.customTools.read.execute, "function");
+  assert.deepEqual(created.local.settingSources, []);
+
+  const error = stream.events.find((e) => e.type === "error");
+  assert.ok(!error, `unexpected error: ${error?.error?.errorMessage}`);
+  const done = stream.events.find((e) => e.type === "done");
+  assert.equal(done.reason, "toolUse");
+  const toolCalls = done.message.content.filter((c: any) => c.type === "toolCall");
+  assert.equal(toolCalls.length, 1);
+  assert.equal(toolCalls[0].name, "read");
+  assert.equal(toolCalls[0].arguments.path, "package.json");
+  assert.ok(
+    stream.events.some((e) => e.type === "toolcall_end"),
+    "expected toolcall_end",
+  );
+});
+
+test("runCursorTurn unwraps Cursor MCP tool calls into pi tool names", async () => {
+  setKnownModelIds(["default"]);
+  const stream = fakeStream();
+  const createAgent = async () => ({
+    send: async () => ({
+      stream: async function* () {
+        yield {
+          type: "assistant",
+          message: {
+            content: [
+              {
+                type: "tool_use",
+                id: "c1",
+                name: "CallMcpTool",
+                input: {
+                  toolName: "read",
+                  arguments: { path: "package.json" },
+                },
+              },
+            ],
+          },
+        };
+      },
+      cancel: async () => {},
+      wait: async () => ({ status: "cancelled" }),
+    }),
+    close: () => {},
+  });
+
+  runCursorTurn({
+    model: { id: "default", api: "cursor-sdk", provider: "cursor" },
+    context: {
+      systemPrompt: "Use pi tools.",
+      messages: [{ role: "user", content: "read package.json" }],
+      tools: [
+        {
+          name: "read",
+          description: "Read a file",
+          parameters: { type: "object", properties: { path: { type: "string" } } },
+        },
+      ],
+    },
+    apiKey: "test-key",
+    deps: {
+      createStream: () => stream,
+      calculateCost: () => {},
+      createAgent,
+    },
+  });
+  await stream.closed;
+
+  const done = stream.events.find((e) => e.type === "done");
+  assert.equal(done.reason, "toolUse");
+  const toolCalls = done.message.content.filter((c: any) => c.type === "toolCall");
+  assert.equal(toolCalls[0].name, "read");
+  assert.equal(toolCalls[0].arguments.path, "package.json");
+});
+
+test("runCursorTurn disables Cursor tools when pi has none", async () => {
+  setKnownModelIds(["default"]);
+  const stream = fakeStream();
+  let created: any;
+  const createAgent = async (opts: any) => {
+    created = opts;
+    return {
+      send: async () => ({
+        stream: async function* () {
+          yield {
+            type: "assistant",
+            message: { content: [{ type: "text", text: "Sunny and calm today." }] },
+          };
+        },
+        cancel: async () => {},
+        wait: async () => ({
+          status: "finished",
+          usage: { inputTokens: 10, outputTokens: 8, totalTokens: 18 },
+        }),
+      }),
+      close: () => {},
+    };
+  };
+
+  runCursorTurn({
+    model: { id: "default", api: "cursor-sdk", provider: "cursor" },
+    context: { messages: [{ role: "user", content: "weather?" }] },
+    apiKey: "test-key",
+    deps: {
+      createStream: () => stream,
+      calculateCost: () => {},
+      createAgent,
+    },
+  });
+  await stream.closed;
+
+  assert.deepEqual(created.tools, []);
+  assert.equal(created.local.customTools, undefined);
+  const done = stream.events.find((e) => e.type === "done");
+  assert.equal(done.reason, "stop");
+  assert.equal(done.message.content[0].text, "Sunny and calm today.");
+});
+
 test("runCursorTurn streams a real Cursor response into ONE text block with spaces", {
   skip: !process.env.CURSOR_API_KEY,
   timeout: 180_000,
@@ -134,7 +401,6 @@ test("runCursorTurn streams a real Cursor response into ONE text block with spac
       ],
     },
     apiKey: process.env.CURSOR_API_KEY,
-    sessionKey: "live",
     deps: { createStream: () => stream, calculateCost: () => {} },
   });
   await stream.closed;
