@@ -1,6 +1,6 @@
 {
   "name": "pi-cursor-auth",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "pi extension: Cursor models through pi's harness (extensions and pi tools stay in the loop)",
   "type": "module",
   "license": "MIT",

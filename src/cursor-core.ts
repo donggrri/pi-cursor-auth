@@ -526,6 +526,13 @@ export function runCursorTurn(opts: {
       }
     };
     const handoff = new AbortController();
+    const cancelRun = () => {
+      try {
+        void Promise.resolve(run?.cancel?.()).catch(() => {});
+      } catch {
+        /* ignore cancellation errors */
+      }
+    };
     const park = () =>
       new Promise<void>((resolve) => {
         if (handoff.signal.aborted) {
@@ -539,11 +546,7 @@ export function runCursorTurn(opts: {
       if (handoffTimer) return;
       handoffTimer = setTimeout(() => {
         handoff.abort();
-        try {
-          run?.cancel?.();
-        } catch {
-          /* ignore */
-        }
+        cancelRun();
       }, 50);
     };
 
@@ -592,11 +595,7 @@ export function runCursorTurn(opts: {
 
       const onAbort = () => {
         handoff.abort();
-        try {
-          run?.cancel?.();
-        } catch {
-          /* ignore */
-        }
+        cancelRun();
       };
       if (options?.signal?.aborted) onAbort();
       options?.signal?.addEventListener?.("abort", onAbort, { once: true });

@@ -17,7 +17,7 @@ pi install npm:pi-cursor-auth
 Pin a version if you want updates to skip this package:
 
 ```bash
-pi install npm:pi-cursor-auth@0.2.2
+pi install npm:pi-cursor-auth@0.2.3
 ```
 
 Installs are written to `~/.pi/agent/settings.json`. Use `-l` to install for the current project (`.pi/settings.json`) instead.

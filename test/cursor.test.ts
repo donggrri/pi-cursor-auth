@@ -401,6 +401,37 @@ test("runCursorTurn disables Cursor tools when pi has none", async () => {
   assert.equal(done.message.content[0].text, "Sunny and calm today.");
 });
 
+test("runCursorTurn consumes rejected SDK cancellation promises", async () => {
+  setKnownModelIds(["default"]);
+  const stream = fakeStream();
+  const controller = new AbortController();
+  controller.abort();
+  let cancelled = false;
+  const createAgent = async () => ({
+    send: async () => ({
+      stream: async function* () {},
+      cancel: () => {
+        cancelled = true;
+        return Promise.reject(new DOMException("This operation was aborted", "AbortError"));
+      },
+      wait: async () => ({ status: "cancelled" }),
+    }),
+    close: () => {},
+  });
+
+  runCursorTurn({
+    model: { id: "default", api: "cursor-sdk", provider: "cursor" },
+    context: { messages: [{ role: "user", content: "hi" }] },
+    options: { signal: controller.signal },
+    apiKey: "test-key",
+    deps: { createStream: () => stream, calculateCost: () => {}, createAgent },
+  });
+  await stream.closed;
+
+  assert.equal(cancelled, true);
+  assert.equal(stream.events.find((e) => e.type === "error")?.reason, "aborted");
+});
+
 test("runCursorTurn streams a real Cursor response into ONE text block with spaces", {
   skip: !process.env.CURSOR_API_KEY,
   timeout: 180_000,
