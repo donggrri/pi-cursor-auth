@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-09-04
+
+### Fixed
+
+- Bridge the Cursor streams into pi-ai's compatibility registry so Hermes Memory and other legacy `completeSimple()` callers can use Cursor for side-channel requests.
+- Configure the Cursor SDK's bundled ripgrep binary when Pi's PATH does not expose it, avoiding repeated ignore-mapping errors.
+
 ## [0.2.0] - 2026-08-27
 
 ### Changed
@@ -54,7 +61,8 @@ Initial public release. Minimal pi extension that uses a Cursor SDK API key as a
 
 - Streamed assistant text and thinking accumulated into a single pi block per turn (Cursor emits one word per chunk; without this, each word rendered on its own line)
 
-[Unreleased]: https://github.com/morizkay/pi-cursor-auth/compare/v0.2.0...main
+[Unreleased]: https://github.com/morizkay/pi-cursor-auth/compare/v0.2.2...main
+[0.2.2]: https://github.com/morizkay/pi-cursor-auth/compare/v0.2.1...v0.2.2
 [0.2.0]: https://github.com/morizkay/pi-cursor-auth/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/morizkay/pi-cursor-auth/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/morizkay/pi-cursor-auth/compare/579fc344fd29e85c1b2667c2d9a82f79dddbec87...v0.1.1

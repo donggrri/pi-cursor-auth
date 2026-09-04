@@ -1,4 +1,6 @@
 import { Agent, Cursor } from "@cursor/sdk";
+import { createRequire } from "node:module";
+import { existsSync } from "node:fs";
 
 export const CURSOR_PROVIDER_ID = "cursor";
 export const CURSOR_API_KEY_PLACEHOLDER = "pi-cursor-auth-placeholder";
@@ -9,6 +11,46 @@ const MODEL_ALIASES: Record<string, string> = {
 };
 
 const knownModelIds = new Set<string>(["default"]);
+const require = createRequire(import.meta.url);
+
+const CURSOR_PLATFORM_PACKAGES: Record<string, string> = {
+  "darwin-arm64": "@cursor/sdk-darwin-arm64",
+  "darwin-x64": "@cursor/sdk-darwin-x64",
+  "linux-arm64": "@cursor/sdk-linux-arm64",
+  "linux-x64": "@cursor/sdk-linux-x64",
+  "win32-x64": "@cursor/sdk-win32-x64",
+};
+
+function bundledRipgrepPath(): string | undefined {
+  const packageName = CURSOR_PLATFORM_PACKAGES[`${process.platform}-${process.arch}`];
+  if (!packageName) return undefined;
+
+  for (const binary of process.platform === "win32" ? ["bin/rg.exe", "bin/rg"] : ["bin/rg"]) {
+    try {
+      const path = require.resolve(`${packageName}/${binary}`);
+      if (existsSync(path)) return path;
+    } catch {
+      // The platform package is an optional dependency.
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The Cursor SDK expects its bundled ripgrep path to be configured by its
+ * host. npm exposes the binary as a package bin, but Pi does not add that
+ * package's bin directory to PATH.
+ */
+export function configureCursorRipgrepPath(
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  const configured = env.CURSOR_RIPGREP_PATH?.trim();
+  if (configured) return configured;
+
+  const bundled = bundledRipgrepPath();
+  if (bundled) env.CURSOR_RIPGREP_PATH = bundled;
+  return bundled;
+}
 
 export function setKnownModelIds(ids: string[]): void {
   knownModelIds.clear();
@@ -226,6 +268,23 @@ function toCustomTools(
 
 export const CURSOR_API = "cursor-sdk";
 export const CURSOR_BASE_URL = "https://cursor.com";
+export const CURSOR_COMPAT_SOURCE_ID = "pi-cursor-auth";
+
+/**
+ * Bridge the native provider streams to pi-ai's legacy compatibility registry.
+ * Some extensions (notably Hermes Memory) use compat.completeSimple() for
+ * side-channel requests rather than the active ModelRegistry.
+ */
+export function createCursorCompatApiProvider(streams: {
+  stream: (...args: any[]) => any;
+  streamSimple: (...args: any[]) => any;
+}): { api: string; stream: (...args: any[]) => any; streamSimple: (...args: any[]) => any } {
+  return {
+    api: CURSOR_API,
+    stream: streams.stream,
+    streamSimple: streams.streamSimple,
+  };
+}
 
 function toPiModel(m: any): any {
   return {
@@ -506,6 +565,7 @@ export function runCursorTurn(opts: {
       }
       prompt = payload.text ?? prompt;
 
+      configureCursorRipgrepPath();
       agent = await createAgent({
         model: {
           id: payload.modelId ?? modelId,

@@ -14,17 +14,10 @@ Requires [pi](https://pi.dev). Then:
 pi install npm:pi-cursor-auth
 ```
 
-Or from git:
-
-```bash
-pi install git:github.com/morizkay/pi-cursor-auth
-```
-
 Pin a version if you want updates to skip this package:
 
 ```bash
-pi install npm:pi-cursor-auth@0.2.0
-pi install git:github.com/morizkay/pi-cursor-auth@v0.2.0
+pi install npm:pi-cursor-auth@0.2.2
 ```
 
 Installs are written to `~/.pi/agent/settings.json`. Use `-l` to install for the current project (`.pi/settings.json`) instead.
@@ -35,12 +28,6 @@ Only one `cursor` provider should be installed. Uninstall any other Cursor provi
 
 ```bash
 pi uninstall npm:pi-cursor-auth
-```
-
-If you installed from git:
-
-```bash
-pi uninstall git:github.com/morizkay/pi-cursor-auth
 ```
 
 Use `-l` if the package was installed in the project.
@@ -94,11 +81,12 @@ Unknown model ids, including `auto-smart`, are mapped to `cursor/default`.
 
 ## How it works
 
-The extension registers a complete pi `Provider` via `createProvider()`. On each turn it:
+The extension registers a complete pi `Provider` via `createProvider()`. It also mirrors its streams into pi-ai's compatibility registry so extensions that use legacy `completeSimple()` calls (such as Hermes Memory) can use the active Cursor provider. On each turn it:
 
 1. Uses pi `/login` (or `CURSOR_API_KEY` / `/cursor-auth`) for the Cursor API key
 2. Sends **pi's** system prompt, conversation, and tools (pi-lens, builtins, and the rest) to a Cursor model
 3. Keeps Cursor's built-in file/shell tools off. Model tool calls come back to pi as `toolCall` events so **pi** executes them and continues the loop
+4. Configures the SDK's bundled ripgrep binary when the host PATH does not expose it, so workspace ignore scanning remains quiet and functional
 
 ## Limitations
 

@@ -44,6 +44,11 @@ declare module "@earendil-works/pi-ai" {
   ): any;
 }
 
+declare module "@earendil-works/pi-ai/compat" {
+  export function registerApiProvider(provider: any, sourceId?: string): void;
+  export function unregisterApiProviders(sourceId: string): void;
+}
+
 declare module "@earendil-works/pi-coding-agent" {
   export interface ExtensionAPI {
     registerProvider(providerOrName: any, config?: any): void;

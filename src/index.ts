@@ -4,6 +4,10 @@ import {
   createProvider,
   envApiKeyAuth,
 } from "@earendil-works/pi-ai";
+import {
+  registerApiProvider,
+  unregisterApiProviders,
+} from "@earendil-works/pi-ai/compat";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
@@ -11,6 +15,8 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import {
   CURSOR_PROVIDER_ID,
   CURSOR_BASE_URL,
+  CURSOR_COMPAT_SOURCE_ID,
+  createCursorCompatApiProvider,
   resolveCursorApiKey,
   discoverCursorModels,
   fallbackModels,
@@ -72,7 +78,15 @@ export function createCursorProvider() {
 }
 
 export default function (pi: any) {
-  pi.registerProvider(createCursorProvider());
+  const provider = createCursorProvider();
+  pi.registerProvider(provider);
+  registerApiProvider(
+    createCursorCompatApiProvider(provider),
+    CURSOR_COMPAT_SOURCE_ID,
+  );
+  pi.on("session_shutdown", () => {
+    unregisterApiProviders(CURSOR_COMPAT_SOURCE_ID);
+  });
 
   pi.registerCommand("cursor-auth", {
     description: "Store your Cursor SDK API key for pi (env, arg, or prompt)",

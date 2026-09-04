@@ -11,6 +11,10 @@ import {
   runCursorTurn,
   resolveCursorApiKey,
   fallbackModels,
+  CURSOR_API,
+  CURSOR_COMPAT_SOURCE_ID,
+  createCursorCompatApiProvider,
+  configureCursorRipgrepPath,
 } from "../src/cursor-core.ts";
 
 function fakeStream() {
@@ -135,6 +139,19 @@ test("thinkingParams maps pi reasoning onto Cursor model params", () => {
   assert.equal(thinkingParams({}, "high"), undefined);
 });
 
+test("cursor streams expose a pi-ai compat registration", () => {
+  const stream = () => "stream";
+  const registration = createCursorCompatApiProvider({
+    stream,
+    streamSimple: stream,
+  });
+
+  assert.equal(CURSOR_COMPAT_SOURCE_ID, "pi-cursor-auth");
+  assert.equal(registration.api, CURSOR_API);
+  assert.equal(registration.stream, stream);
+  assert.equal(registration.streamSimple, stream);
+});
+
 test("fallbackModels are complete pi Model objects", () => {
   const models = fallbackModels();
   assert.ok(models.length > 0);
@@ -145,6 +162,12 @@ test("fallbackModels are complete pi Model objects", () => {
     assert.equal(typeof model.id, "string");
     assert.equal(model.reasoning, true);
   }
+});
+
+test("configureCursorRipgrepPath preserves an explicit SDK path", () => {
+  const env = { CURSOR_RIPGREP_PATH: "/tmp/rg" };
+  assert.equal(configureCursorRipgrepPath(env), "/tmp/rg");
+  assert.equal(env.CURSOR_RIPGREP_PATH, "/tmp/rg");
 });
 
 test("resolveCursorApiKey prefers explicit key over placeholder/env/stored", () => {
