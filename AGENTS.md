@@ -26,6 +26,22 @@ export CURSOR_API_KEY="crsr_..."
 npm test
 ```
 
+## Release procedure
+
+npm is the canonical distribution channel. Public install instructions must use `pi install npm:pi-cursor-auth`; GitHub is only the source repository and release page.
+
+1. Confirm the next version from `npm view pi-cursor-auth version` and the existing `v*` tags. Do not reuse a published npm version.
+2. Update `package.json` and the root entry in `package-lock.json` to the same version.
+3. Move `[Unreleased]` notes into `## [X.Y.Z] - YYYY-MM-DD`, leave `[Unreleased]` empty, and update the comparison links.
+4. Update npm version pins in `README.md`; do not replace them with GitHub install commands.
+5. Run `npm test`, `npm run check`, `npm pack --dry-run`, and `git diff --check`.
+6. Commit the complete release. Verify the commit contains the released version and a clean working tree.
+7. Publish from that commit with `npm publish --access public`; complete npm 2FA when prompted, then verify with `npm view pi-cursor-auth version`.
+8. Create the matching annotated tag (`git tag -a vX.Y.Z -m "Release vX.Y.Z"`) on the release commit, push `main` and the tag to `origin`, and create the GitHub release from that exact tag.
+9. Verify the GitHub tag, release, npm version, and repository `HEAD` all refer to the intended release.
+
+A GitHub push and an npm publish are separate operations. Never claim the package is released until `npm view` confirms it.
+
 ## Rules
 
 - Keep the provider small. New behavior belongs in `cursor-core.ts` if it is testable without pi.
