@@ -7,6 +7,7 @@ import {
   collectToolCalls,
   unwrapCursorToolCall,
   thinkingParams,
+  cursorModelParams,
   setKnownModelIds,
   runCursorTurn,
   resolveCursorApiKey,
@@ -139,6 +140,72 @@ test("thinkingParams maps pi reasoning onto Cursor model params", () => {
   assert.equal(thinkingParams({}, "high"), undefined);
 });
 
+test("cursorModelParams disables fast for a non-fast model", () => {
+  const model = {
+    id: "grok-4.6",
+    cursorParameters: [
+      {
+        id: "reasoning_effort",
+        displayName: "Reasoning",
+        values: [{ value: "low" }, { value: "high" }],
+      },
+      {
+        id: "fast",
+        displayName: "Fast mode",
+        values: [{ value: "true" }, { value: "false" }],
+      },
+    ],
+  };
+
+  assert.deepEqual(cursorModelParams(model, "high"), [
+    { id: "reasoning_effort", value: "high" },
+    { id: "fast", value: "false" },
+  ]);
+});
+
+test("cursorModelParams preserves an explicit fast model selection", () => {
+  const model = {
+    id: "grok-4.6-fast",
+    cursorParameters: [
+      {
+        id: "reasoning_effort",
+        displayName: "Reasoning",
+        values: [{ value: "low" }, { value: "high" }],
+      },
+      {
+        id: "fast",
+        displayName: "Fast mode",
+        values: [{ value: "true" }, { value: "false" }],
+      },
+    ],
+  };
+
+  assert.deepEqual(cursorModelParams(model, "high"), [
+    { id: "reasoning_effort", value: "high" },
+  ]);
+});
+
+test("cursorModelParams disables fast for a parameter-less non-fast model", () => {
+  assert.deepEqual(cursorModelParams({ id: "grok-4.6" }, undefined), [
+    { id: "fast", value: "false" },
+  ]);
+});
+
+test("cursorModelParams omits unsupported false values", () => {
+  const model = {
+    id: "grok-4.6",
+    cursorParameters: [
+      {
+        id: "fast",
+        displayName: "Fast mode",
+        values: [{ value: "true" }],
+      },
+    ],
+  };
+
+  assert.equal(cursorModelParams(model, undefined), undefined);
+});
+
 test("cursor streams expose a pi-ai compat registration", () => {
   const stream = () => "stream";
   const registration = createCursorCompatApiProvider({
@@ -221,7 +288,7 @@ test("runCursorTurn maps unknown model id to default", async () => {
   assert.match(error.error.errorMessage, /No Cursor API key/);
 });
 
-test("runCursorTurn emits pi toolCall events and does not enable Cursor tools", async () => {
+test("runCursorTurn emits pi toolCall events, passes fast params, and does not enable Cursor tools", async () => {
   setKnownModelIds(["default"]);
   const stream = fakeStream();
   let created: any;
@@ -258,7 +325,18 @@ test("runCursorTurn emits pi toolCall events and does not enable Cursor tools", 
   };
 
   runCursorTurn({
-    model: { id: "default", api: "cursor-sdk", provider: "cursor" },
+    model: {
+      id: "default",
+      api: "cursor-sdk",
+      provider: "cursor",
+      cursorParameters: [
+        {
+          id: "fast",
+          displayName: "Fast mode",
+          values: [{ value: "true" }, { value: "false" }],
+        },
+      ],
+    },
     context: {
       systemPrompt: "Use pi tools.",
       messages: [{ role: "user", content: "read package.json" }],
@@ -282,6 +360,7 @@ test("runCursorTurn emits pi toolCall events and does not enable Cursor tools", 
   });
   await stream.closed;
 
+  assert.deepEqual(created.model.params, [{ id: "fast", value: "false" }]);
   assert.deepEqual(created.tools, ["mcp"]);
   assert.equal(typeof created.local.customTools.read.execute, "function");
   assert.deepEqual(created.local.settingSources, []);

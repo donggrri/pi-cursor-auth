@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Default Cursor model params to `fast:false` when the model ID does not include `fast`, preserve explicit Fast model selections, and omit unsupported `false` values when the catalog does not allow them.
+
 ## [0.2.3] - 2026-09-04
 
 ### Fixed

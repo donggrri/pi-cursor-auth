@@ -230,6 +230,31 @@ export function thinkingParams(
   return [{ id: def.id, value: String(value) }];
 }
 
+export function cursorModelParams(
+  model: any,
+  reasoning: string | undefined,
+): any[] | undefined {
+  const params = thinkingParams(model, reasoning) ?? [];
+  if (/fast/i.test(model?.id ?? "")) {
+    return params.length ? params : undefined;
+  }
+
+  const defs = model?.cursorParameters ?? model?.parameters ?? [];
+  const fast = Array.isArray(defs)
+    ? defs.find((definition: any) => definition?.id === "fast")
+    : undefined;
+  const supportsFalse =
+    !fast ||
+    (fast.values ?? []).some(
+      (value: any) => (value?.value ?? value) === "false",
+    );
+  if (!supportsFalse || params.some((param) => param.id === "fast")) {
+    return params.length ? params : undefined;
+  }
+
+  return [...params, { id: "fast", value: "false" }];
+}
+
 function toCustomTools(
   tools: any[],
   onCall: (call: {
@@ -554,7 +579,7 @@ export function runCursorTurn(opts: {
       const piTools: any[] = context?.tools ?? [];
       let prompt = buildHarnessPrompt(context);
       const images = extractLastUserImages(context);
-      const params = thinkingParams(model, options?.reasoning);
+      const params = cursorModelParams(model, options?.reasoning);
       let payload: any = {
         text: prompt,
         images,
