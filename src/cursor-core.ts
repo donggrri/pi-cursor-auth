@@ -5,12 +5,17 @@ import { existsSync } from "node:fs";
 export const CURSOR_PROVIDER_ID = "cursor";
 export const CURSOR_API_KEY_PLACEHOLDER = "pi-cursor-auth-placeholder";
 
+export const DEFAULT_CURSOR_MODEL_ID = "composer-2.5";
+
 const MODEL_ALIASES: Record<string, string> = {
-  "auto-smart": "default",
-  auto: "default",
+  "auto-smart": DEFAULT_CURSOR_MODEL_ID,
+  auto: DEFAULT_CURSOR_MODEL_ID,
+  default: DEFAULT_CURSOR_MODEL_ID,
 };
 
-const knownModelIds = new Set<string>(["default"]);
+const THINKING_LEVEL_SUFFIX = /:(?:high|medium|low|off|max|xhigh|minimal)$/i;
+
+const knownModelIds = new Set<string>([DEFAULT_CURSOR_MODEL_ID, "default"]);
 const require = createRequire(import.meta.url);
 
 const CURSOR_PLATFORM_PACKAGES: Record<string, string> = {
@@ -55,12 +60,33 @@ export function configureCursorRipgrepPath(
 export function setKnownModelIds(ids: string[]): void {
   knownModelIds.clear();
   for (const id of ids) knownModelIds.add(id);
+  knownModelIds.add(DEFAULT_CURSOR_MODEL_ID);
   knownModelIds.add("default");
 }
 
-function resolveModelId(requested: string): string {
-  if (MODEL_ALIASES[requested]) return MODEL_ALIASES[requested];
-  return knownModelIds.has(requested) ? requested : "default";
+function stripThinkingSuffix(id: string): { base: string; suffix: string | undefined } {
+  const match = id.match(THINKING_LEVEL_SUFFIX);
+  if (!match) return { base: id, suffix: undefined };
+  return { base: id.slice(0, -match[0].length), suffix: match[0] };
+}
+
+function isComposer25(id: string | undefined): boolean {
+  if (!id) return false;
+  return stripThinkingSuffix(id).base === DEFAULT_CURSOR_MODEL_ID;
+}
+
+/**
+ * Cursor remaps composer-2.5 + effort/thinking to Auto (`default`).
+ * Keep Auto aliases and composer thinking suffixes on composer-2.5 instead.
+ */
+export function resolveModelId(requested: string): string {
+  const { base, suffix } = stripThinkingSuffix(requested);
+  const aliased = MODEL_ALIASES[base];
+  if (aliased) return aliased;
+  if (base === DEFAULT_CURSOR_MODEL_ID) return DEFAULT_CURSOR_MODEL_ID;
+  if (knownModelIds.has(requested)) return requested;
+  if (suffix && knownModelIds.has(base)) return requested;
+  return DEFAULT_CURSOR_MODEL_ID;
 }
 
 export function resolveCursorApiKey(
@@ -216,6 +242,8 @@ export function thinkingParams(
   reasoning: string | undefined,
 ): any[] | undefined {
   if (!reasoning || reasoning === "off") return undefined;
+  // composer-2.5 + effort is remapped to Auto by Cursor; never send it.
+  if (isComposer25(model?.id)) return undefined;
   const defs = model?.cursorParameters ?? model?.parameters ?? [];
   if (!Array.isArray(defs) || !defs.length) return undefined;
   const def = defs.find(
@@ -328,6 +356,7 @@ function toPiModel(m: any): any {
 }
 
 const FALLBACK_MODELS: any[] = [
+  toPiModel({ id: DEFAULT_CURSOR_MODEL_ID, displayName: "Composer 2.5" }),
   toPiModel({ id: "default", displayName: "Cursor Default" }),
   toPiModel({ id: "claude-opus-5", displayName: "Claude Opus 5" }),
   toPiModel({ id: "gpt-5.6-sol", displayName: "GPT-5.6 Sol" }),

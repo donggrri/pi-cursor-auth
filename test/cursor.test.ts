@@ -9,6 +9,7 @@ import {
   thinkingParams,
   cursorModelParams,
   setKnownModelIds,
+  resolveModelId,
   runCursorTurn,
   resolveCursorApiKey,
   fallbackModels,
@@ -222,6 +223,7 @@ test("cursor streams expose a pi-ai compat registration", () => {
 test("fallbackModels are complete pi Model objects", () => {
   const models = fallbackModels();
   assert.ok(models.length > 0);
+  assert.equal(models[0].id, "composer-2.5");
   for (const model of models) {
     assert.equal(model.provider, "cursor");
     assert.equal(model.api, "cursor-sdk");
@@ -229,6 +231,44 @@ test("fallbackModels are complete pi Model objects", () => {
     assert.equal(typeof model.id, "string");
     assert.equal(model.reasoning, true);
   }
+});
+
+test("resolveModelId maps Auto and composer thinking suffixes to composer-2.5", () => {
+  setKnownModelIds(["composer-2.5", "grok-4.6"]);
+  assert.equal(resolveModelId("composer-2.5:high"), "composer-2.5");
+  assert.equal(resolveModelId("composer-2.5:medium"), "composer-2.5");
+  assert.equal(resolveModelId("composer-2.5"), "composer-2.5");
+  assert.equal(resolveModelId("auto-smart"), "composer-2.5");
+  assert.equal(resolveModelId("auto"), "composer-2.5");
+  assert.equal(resolveModelId("auto:high"), "composer-2.5");
+  assert.equal(resolveModelId("default"), "composer-2.5");
+  assert.equal(resolveModelId("default:high"), "composer-2.5");
+  assert.equal(resolveModelId("not-a-real-model"), "composer-2.5");
+  assert.equal(resolveModelId("grok-4.6"), "grok-4.6");
+  assert.equal(resolveModelId("grok-4.6:high"), "grok-4.6:high");
+});
+
+test("thinkingParams does not send effort for composer-2.5", () => {
+  const model = {
+    id: "composer-2.5",
+    cursorParameters: [
+      {
+        id: "effort",
+        displayName: "Effort",
+        values: [{ value: "low" }, { value: "high" }],
+      },
+      {
+        id: "fast",
+        displayName: "Fast",
+        values: [{ value: "false" }, { value: "true" }],
+      },
+    ],
+  };
+  assert.equal(thinkingParams(model, "high"), undefined);
+  assert.equal(thinkingParams({ ...model, id: "composer-2.5:high" }, "high"), undefined);
+  assert.deepEqual(cursorModelParams(model, "high"), [
+    { id: "fast", value: "false" },
+  ]);
 });
 
 test("configureCursorRipgrepPath preserves an explicit SDK path", () => {
@@ -274,18 +314,37 @@ test("runCursorTurn errors without an API key", async () => {
   assert.match(error.error.errorMessage, /No Cursor API key/);
 });
 
-test("runCursorTurn maps unknown model id to default", async () => {
-  setKnownModelIds(["default", "claude-opus-5"]);
+test("runCursorTurn maps composer-2.5:high and Auto aliases to composer-2.5", async () => {
+  setKnownModelIds(["composer-2.5", "grok-4.6"]);
   const stream = fakeStream();
+  let created: any;
+  const createAgent = async (opts: any) => {
+    created = opts;
+    return {
+      send: async () => ({
+        stream: async function* () {
+          yield {
+            type: "assistant",
+            message: { content: [{ type: "text", text: "ok" }] },
+          };
+        },
+        cancel: async () => {},
+        wait: async () => ({ status: "finished" }),
+      }),
+      close: () => {},
+    };
+  };
+
   runCursorTurn({
-    model: { id: "auto-smart", api: "cursor-sdk", provider: "cursor" },
+    model: { id: "composer-2.5:high", api: "cursor-sdk", provider: "cursor" },
     context: { messages: [{ role: "user", content: "hi" }] },
-    apiKey: undefined,
-    deps: { createStream: () => stream, calculateCost: () => {} },
+    options: { reasoning: "high" },
+    apiKey: "test-key",
+    deps: { createStream: () => stream, calculateCost: () => {}, createAgent },
   });
   await stream.closed;
-  const error = stream.events.find((e) => e.type === "error");
-  assert.match(error.error.errorMessage, /No Cursor API key/);
+  assert.equal(created.model.id, "composer-2.5");
+  assert.deepEqual(created.model.params, [{ id: "fast", value: "false" }]);
 });
 
 test("runCursorTurn emits pi toolCall events, passes fast params, and does not enable Cursor tools", async () => {

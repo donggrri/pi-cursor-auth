@@ -53,14 +53,14 @@ If pi started without a key, run **`/cursor-refresh-models`** after `/login` or 
 
 Pick a Cursor model with `/model` (or Ctrl+L), for example:
 
-- `cursor/default`
+- `cursor/composer-2.5`
 - `cursor/claude-opus-5`
 - `cursor/gpt-5.6-sol`
 
 You can also start pi with a model:
 
 ```bash
-pi --model cursor/default
+pi --model cursor/composer-2.5
 ```
 
 To save Cursor as the startup default, select it in `/model` and press **Ctrl+S**. That writes `~/.pi/agent/settings.json`:
@@ -68,11 +68,11 @@ To save Cursor as the startup default, select it in `/model` and press **Ctrl+S*
 ```json
 {
   "defaultProvider": "cursor",
-  "defaultModel": "default"
+  "defaultModel": "composer-2.5"
 }
 ```
 
-Unknown model ids, including `auto-smart`, are mapped to `cursor/default`.
+Unknown model ids, including `auto-smart`, `auto`, and `default`, are mapped to `cursor/composer-2.5`. Thinking-level suffixes such as `:high` are stripped only for `composer-2.5` and Auto aliases; other Cursor models keep them.
 
 ## Commands
 

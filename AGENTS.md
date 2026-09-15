@@ -48,7 +48,7 @@ A GitHub push and an npm publish are separate operations. Never claim the packag
 - Register a complete pi-ai `Provider` (`createProvider` + `envApiKeyAuth` + `fetchModels`). Do not use the legacy `{ api, streamSimple, models }` config form.
 - Each `streamSimple` call is one model round-trip, not a Cursor agent loop. Pass pi's system prompt, messages, and tools. Intercept Cursor custom-tool/MCP calls and emit pi `toolCall` events. Drop Cursor host tools (`shell`, `read`, …) that are not in `context.tools`.
 - Stream Cursor chunks into **one** pi text block per turn (words must be joined with spaces).
-- Unknown model ids (including `auto-smart`) map to `cursor/default`.
+- Unknown model ids (including `auto-smart`, `auto`, and `default`) map to `cursor/composer-2.5`. Strip thinking-level suffixes such as `:high` only for `composer-2.5` and Auto aliases; keep them on other Cursor models. Do not send effort/thinking params for `composer-2.5`.
 - API key order: `options.apiKey` from pi auth, then `CURSOR_API_KEY`.
 - Do not commit secrets (`.env`, `.cursor-key`, keys in `auth.json`).
 - Public docs live in `README.md`. Follow pi's real CLI (`pi install npm:…`, `pi uninstall`, `/login`, `/model` + Ctrl+S).
