@@ -87,6 +87,7 @@ The extension registers a complete pi `Provider` via `createProvider()`. It also
 2. Sends **pi's** system prompt, conversation, and tools (pi-lens, builtins, and the rest) to a Cursor model
 3. Keeps Cursor's built-in file/shell tools off. Model tool calls come back to pi as `toolCall` events so **pi** executes them and continues the loop
 4. Configures the SDK's bundled ripgrep binary when the host PATH does not expose it, so workspace ignore scanning remains quiet and functional
+5. Caches an active workspace prewarm lease in memory across turns so the Cursor SDK's underlying `LocalExecutor` avoids redundant file tree scans and SQLite reinitializations while keeping turns stateless
 
 ## Limitations
 

@@ -1,4 +1,4 @@
-import { Agent, Cursor } from "@cursor/sdk";
+import { Agent, Cursor, createAgentPlatform } from "@cursor/sdk";
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 
@@ -384,10 +384,105 @@ export async function discoverCursorModels(
   }
 }
 
-interface TurnDeps {
+export interface WorkspaceLease {
+  apiKey: string;
+  cwd: string;
+  release: () => Promise<void>;
+}
+
+export interface PrewarmOptions {
+  apiKey: string;
+  cwd: string;
+  prewarmFn?: (opts: { apiKey: string; cwd: string }) => Promise<() => Promise<void>>;
+}
+
+let activeLease: WorkspaceLease | null = null;
+let activeAcquisition: { key: string; promise: Promise<void> } | null = null;
+
+async function defaultPrewarmWorkspace(opts: PrewarmOptions): Promise<() => Promise<void>> {
+  configureCursorRipgrepPath();
+  const platform = await createAgentPlatform();
+  const release = await platform.prewarmLocalWorkspace({
+    apiKey: opts.apiKey,
+    local: {
+      cwd: opts.cwd,
+      settingSources: [],
+    },
+  });
+  return typeof release === "function" ? release : async () => {};
+}
+
+export async function acquireWorkspaceLease(opts: PrewarmOptions): Promise<void> {
+  const { apiKey, cwd, prewarmFn } = opts;
+  const key = `${apiKey}::${cwd}`;
+
+  if (activeLease && activeLease.apiKey === apiKey && activeLease.cwd === cwd) {
+    return;
+  }
+
+  if (activeAcquisition && activeAcquisition.key === key) {
+    return activeAcquisition.promise;
+  }
+
+  if (activeLease && (activeLease.apiKey !== apiKey || activeLease.cwd !== cwd)) {
+    const oldLease = activeLease;
+    activeLease = null;
+    try {
+      await oldLease.release();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const acquisitionPromise = (async () => {
+    try {
+      const runner = prewarmFn ?? defaultPrewarmWorkspace;
+      const release = await runner({ apiKey, cwd });
+      activeLease = {
+        apiKey,
+        cwd,
+        release: typeof release === "function" ? release : async () => {},
+      };
+    } catch {
+      activeLease = null;
+    } finally {
+      if (activeAcquisition?.promise === acquisitionPromise) {
+        activeAcquisition = null;
+      }
+    }
+  })();
+
+  activeAcquisition = { key, promise: acquisitionPromise };
+  return acquisitionPromise;
+}
+
+export async function releaseWorkspaceLease(): Promise<void> {
+  if (activeLease) {
+    const lease = activeLease;
+    activeLease = null;
+    try {
+      await lease.release();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+export function getActiveWorkspaceLease(): { apiKey: string; cwd: string } | null {
+  if (!activeLease) return null;
+  return { apiKey: activeLease.apiKey, cwd: activeLease.cwd };
+}
+
+export function __resetWorkspaceLeaseManagerForTests(): void {
+  activeLease = null;
+  activeAcquisition = null;
+}
+
+export interface TurnDeps {
   createStream: () => any;
   calculateCost: (model: any, usage: any) => void;
   createAgent?: (opts: any) => Promise<any>;
+  acquireLease?: (opts: PrewarmOptions) => Promise<void>;
 }
 
 function makeInitialMessage(model: any): any {
@@ -539,6 +634,77 @@ function makeBlockAppenders(output: any, stream: any) {
   return { appendThinking, appendText, closeThinking, closeText, emitToolCalls };
 }
 
+function isAbortError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as { name?: unknown; code?: unknown; message?: unknown };
+  return (
+    e.name === "AbortError" ||
+    e.code === 20 ||
+    (typeof e.message === "string" &&
+      (e.message === "This operation was aborted" ||
+        e.message === "The operation was aborted"))
+  );
+}
+
+/**
+ * Cursor SDK abort listeners throw on the next tick (Node EventTarget).
+ * That escapes try/catch and rejected-promise handlers. Extra
+ * `uncaughtException` listeners cannot stop pi's process-exit handler, but
+ * `setUncaughtExceptionCaptureCallback` runs first and can swallow AbortError.
+ */
+let abortShieldDepth = 0;
+let abortShieldInstalled = false;
+
+function abortShieldCallback(err: unknown): void {
+  if (isAbortError(err)) return;
+  abortShieldDepth = 0;
+  abortShieldInstalled = false;
+  try {
+    process.setUncaughtExceptionCaptureCallback(null);
+  } catch {
+    /* ignore */
+  }
+  process.nextTick(() => {
+    throw err;
+  });
+}
+
+function acquireAbortShield(): void {
+  abortShieldDepth += 1;
+  if (abortShieldDepth !== 1) return;
+  if (process.hasUncaughtExceptionCaptureCallback()) return;
+  process.setUncaughtExceptionCaptureCallback(abortShieldCallback);
+  abortShieldInstalled = true;
+}
+
+function releaseAbortShield(): void {
+  if (abortShieldDepth === 0) return;
+  abortShieldDepth -= 1;
+  if (abortShieldDepth > 0 || !abortShieldInstalled) return;
+  abortShieldInstalled = false;
+  try {
+    process.setUncaughtExceptionCaptureCallback(null);
+  } catch {
+    /* ignore */
+  }
+}
+
+function swallowAbortErrorsDuring(work: () => unknown): void {
+  acquireAbortShield();
+  const release = () => releaseAbortShield();
+  try {
+    const result = work();
+    void Promise.resolve(result)
+      .catch(() => {})
+      .finally(() => {
+        process.nextTick(release);
+      });
+  } catch (err) {
+    process.nextTick(release);
+    if (!isAbortError(err)) throw err;
+  }
+}
+
 export function runCursorTurn(opts: {
   model: any;
   context: any;
@@ -581,11 +747,7 @@ export function runCursorTurn(opts: {
     };
     const handoff = new AbortController();
     const cancelRun = () => {
-      try {
-        void Promise.resolve(run?.cancel?.()).catch(() => {});
-      } catch {
-        /* ignore cancellation errors */
-      }
+      swallowAbortErrorsDuring(() => run?.cancel?.());
     };
     const park = () =>
       new Promise<void>((resolve) => {
@@ -623,6 +785,8 @@ export function runCursorTurn(opts: {
       prompt = payload.text ?? prompt;
 
       configureCursorRipgrepPath();
+      const acquire = deps.acquireLease ?? acquireWorkspaceLease;
+      await acquire({ apiKey, cwd: process.cwd() });
       agent = await createAgent({
         model: {
           id: payload.modelId ?? modelId,
@@ -726,11 +890,7 @@ export function runCursorTurn(opts: {
       } catch {
         /* ignore */
       }
-      try {
-        agent?.close?.();
-      } catch {
-        /* ignore */
-      }
+      swallowAbortErrorsDuring(() => agent?.close?.());
       stream.end(output);
     }
   })();

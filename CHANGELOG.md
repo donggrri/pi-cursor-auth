@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Maintain an active `LocalExecutor` prewarm lease across turns in `cursor-core.ts` (released on session shutdown or key/cwd change) to eliminate repeated workspace scan and SQLite cold starts without double-accumulating conversation context.
+
 ### Fixed
 
+- Swallow Cursor SDK abort-listener `AbortError` throws during tool handoff `cancel()`/`close()`, so spawning a subagent (for example `worker` on `composer-2.5`) does not crash pi with `uncaughtException`.
 - Map unknown Cursor model ids and `auto`/`auto-smart`/`default` to `composer-2.5` instead of Cursor Auto. Strip thinking-level suffixes such as `:high` only for `composer-2.5` and Auto aliases, keep them on other Cursor models, and omit effort/thinking params for `composer-2.5` so Cursor does not remap the request to Auto.
 - Default Cursor model params to `fast:false` when the model ID does not include `fast`, preserve explicit Fast model selections, and omit unsupported `false` values when the catalog does not allow them.
 

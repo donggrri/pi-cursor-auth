@@ -22,6 +22,7 @@ import {
   fallbackModels,
   setKnownModelIds,
   createCursorStreams,
+  releaseWorkspaceLease,
 } from "./cursor-core.js";
 
 function authJsonPath(): string {
@@ -84,8 +85,9 @@ export default function (pi: any) {
     createCursorCompatApiProvider(provider),
     CURSOR_COMPAT_SOURCE_ID,
   );
-  pi.on("session_shutdown", () => {
+  pi.on("session_shutdown", async () => {
     unregisterApiProviders(CURSOR_COMPAT_SOURCE_ID);
+    await releaseWorkspaceLease();
   });
 
   pi.registerCommand("cursor-auth", {
