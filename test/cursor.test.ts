@@ -668,6 +668,80 @@ test("runCursorTurn swallows SDK abort-listener throws during subagent handoff",
   );
 });
 
+test("runCursorTurn swallows abort-listener throws that arrive after cancel() settles", async () => {
+  setKnownModelIds(["composer-2.5", "default"]);
+  const stream = fakeStream();
+  const leaked: unknown[] = [];
+  const onUncaught = (err: unknown) => {
+    leaked.push(err);
+  };
+  process.on("uncaughtException", onUncaught);
+
+  let cancelled = false;
+  const createAgent = async () => ({
+    send: async () => ({
+      stream: async function* () {
+        yield {
+          type: "assistant",
+          message: {
+            content: [
+              {
+                type: "tool_use",
+                id: "c1",
+                name: "subagent",
+                input: { agent: "worker", task: "do Tpack" },
+              },
+            ],
+          },
+        };
+        await new Promise((r) => setTimeout(r, 80));
+      },
+      cancel: () => {
+        cancelled = true;
+        // SDK: emitStatus then controller.abort() after cancel()'s promise can settle.
+        setTimeout(() => sdkNestedAbortThrow(), 20);
+        return Promise.resolve();
+      },
+      wait: async () => ({ status: "cancelled" }),
+    }),
+    close: () => {},
+  });
+
+  try {
+    runCursorTurn({
+      model: { id: "composer-2.5", api: "cursor-sdk", provider: "cursor" },
+      context: {
+        messages: [{ role: "user", content: "run worker" }],
+        tools: [
+          {
+            name: "subagent",
+            description: "Spawn a subagent",
+            parameters: { type: "object", properties: {} },
+          },
+        ],
+      },
+      apiKey: "test-key",
+      deps: { createStream: () => stream, calculateCost: () => {}, createAgent },
+    });
+    await stream.closed;
+    await new Promise((r) => setTimeout(r, 40));
+  } finally {
+    process.removeListener("uncaughtException", onUncaught);
+  }
+
+  assert.equal(cancelled, true);
+  assert.equal(stream.events.find((e) => e.type === "done")?.reason, "toolUse");
+  assert.equal(
+    leaked.filter(
+      (err) =>
+        err instanceof Error &&
+        (err.name === "AbortError" || err.message === "This operation was aborted"),
+    ).length,
+    0,
+    "AbortError after cancel() settles must not reach uncaughtException while the turn is alive",
+  );
+});
+
 test("runCursorTurn streams a real Cursor response into ONE text block with spaces", {
   skip: !process.env.CURSOR_API_KEY,
   timeout: 180_000,

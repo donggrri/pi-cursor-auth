@@ -651,6 +651,10 @@ function isAbortError(err: unknown): boolean {
  * That escapes try/catch and rejected-promise handlers. Extra
  * `uncaughtException` listeners cannot stop pi's process-exit handler, but
  * `setUncaughtExceptionCaptureCallback` runs first and can swallow AbortError.
+ *
+ * Shield lifetime is the Cursor *turn*, not a single cancel()/close() call.
+ * SDK abort (controller.abort after emitStatus, nested withCancel) can land
+ * after those promises settle while the turn is still draining.
  */
 let abortShieldDepth = 0;
 let abortShieldInstalled = false;
@@ -703,6 +707,16 @@ function swallowAbortErrorsDuring(work: () => unknown): void {
     process.nextTick(release);
     if (!isAbortError(err)) throw err;
   }
+}
+
+function scheduleAbortShieldRelease(): void {
+  process.nextTick(() => {
+    setImmediate(() => {
+      process.nextTick(() => {
+        releaseAbortShield();
+      });
+    });
+  });
 }
 
 export function runCursorTurn(opts: {
@@ -767,6 +781,7 @@ export function runCursorTurn(opts: {
     };
 
     try {
+      acquireAbortShield();
       const piTools: any[] = context?.tools ?? [];
       let prompt = buildHarnessPrompt(context);
       const images = extractLastUserImages(context);
@@ -892,6 +907,7 @@ export function runCursorTurn(opts: {
       }
       swallowAbortErrorsDuring(() => agent?.close?.());
       stream.end(output);
+      scheduleAbortShieldRelease();
     }
   })();
 
